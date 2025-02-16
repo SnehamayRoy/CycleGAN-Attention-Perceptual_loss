@@ -131,7 +131,7 @@ def main():
 
     L1 = nn.L1Loss()
     mse = nn.MSELoss()
-    perceptual_loss = PerceptualLoss().to(config.DEVICE)
+    perceptual_loss = PerceptualLoss().cuda()
     if config.LOAD_MODEL:
         load_checkpoint(
             config.CHECKPOINT_GEN_H,

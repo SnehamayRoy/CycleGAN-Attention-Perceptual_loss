@@ -5,21 +5,29 @@ import torchvision.models as models
 class PerceptualLoss(nn.Module):
     def __init__(self):
         super(PerceptualLoss, self).__init__()
-        self.add_module('vgg', VGG19_relu())
-        self.criterion = torch.nn.MSELoss()
+        self.vgg = VGG19_relu()
+        self.criterion = nn.MSELoss()
         self.weights = [1.0/64, 1.0/64, 1.0/32, 1.0/32, 1.0/1]
         self.IN = nn.InstanceNorm2d(512, affine=False, track_running_stats=False)
-        self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1,-1,1,1).to(self.device)
-        self.std = torch.tensor([0.229, 0.224, 0.225]).view(1,-1,1,1).to(self.device)
-    
-    def __call__(self, x, y):
+        
+        # Register normalization parameters as buffers
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, -1, 1, 1))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, -1, 1, 1))
+
+    def forward(self, x, y):
+        # Handle grayscale inputs
         if x.shape[1] != 3:
             x = x.repeat(1, 3, 1, 1)
             y = y.repeat(1, 3, 1, 1)
-        x = (x - self.mean.to(x)) / self.std.to(x)
-        y = (y - self.mean.to(y)) / self.std.to(y)
+        
+        # Normalize inputs
+        x = (x - self.mean) / self.std
+        y = (y - self.mean) / self.std
+        
+        # Get VGG features
         x_vgg, y_vgg = self.vgg(x), self.vgg(y)
         
+        # Calculate perceptual loss
         loss  = self.weights[0] * self.criterion(self.IN(x_vgg['relu1_1']), self.IN(y_vgg['relu1_1']))
         loss += self.weights[1] * self.criterion(self.IN(x_vgg['relu2_1']), self.IN(y_vgg['relu2_1']))
         loss += self.weights[2] * self.criterion(self.IN(x_vgg['relu3_1']), self.IN(y_vgg['relu3_1']))
@@ -28,130 +36,72 @@ class PerceptualLoss(nn.Module):
 
         return loss
 
-
-class VGG19_relu(torch.nn.Module):
+class VGG19_relu(nn.Module):
     def __init__(self):
         super(VGG19_relu, self).__init__()
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        cnn = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).to(self.device)
-        # cnn.load_state_dict(torch.load(os.path.join('./models/', 'vgg19-dcbb9e9d.pth')))
-        cnn = cnn.to(self.device)
-        features = cnn.features
-        self.relu1_1 = torch.nn.Sequential()
-        self.relu1_2 = torch.nn.Sequential()
-
-        self.relu2_1 = torch.nn.Sequential()
-        self.relu2_2 = torch.nn.Sequential()
-
-        self.relu3_1 = torch.nn.Sequential()
-        self.relu3_2 = torch.nn.Sequential()
-        self.relu3_3 = torch.nn.Sequential()
-        self.relu3_4 = torch.nn.Sequential()
-
-        self.relu4_1 = torch.nn.Sequential()
-        self.relu4_2 = torch.nn.Sequential()
-        self.relu4_3 = torch.nn.Sequential()
-        self.relu4_4 = torch.nn.Sequential()
-
-        self.relu5_1 = torch.nn.Sequential()
-        self.relu5_2 = torch.nn.Sequential()
-        self.relu5_3 = torch.nn.Sequential()
-        self.relu5_4 = torch.nn.Sequential()
-
-        for x in range(2):
-            self.relu1_1.add_module(str(x), features[x])
-
-        for x in range(2, 4):
-            self.relu1_2.add_module(str(x), features[x])
-
-        for x in range(4, 7):
-            self.relu2_1.add_module(str(x), features[x])
-
-        for x in range(7, 9):
-            self.relu2_2.add_module(str(x), features[x])
-
-        for x in range(9, 12):
-            self.relu3_1.add_module(str(x), features[x])
-
-        for x in range(12, 14):
-            self.relu3_2.add_module(str(x), features[x])
-
-        for x in range(14, 16):
-            self.relu3_3.add_module(str(x), features[x])
-
-        for x in range(16, 18):
-            self.relu3_4.add_module(str(x), features[x])
-
-        for x in range(18, 21):
-            self.relu4_1.add_module(str(x), features[x])
-
-        for x in range(21, 23):
-            self.relu4_2.add_module(str(x), features[x])
-
-        for x in range(23, 25):
-            self.relu4_3.add_module(str(x), features[x])
-
-        for x in range(25, 27):
-            self.relu4_4.add_module(str(x), features[x])
-
-        for x in range(27, 30):
-            self.relu5_1.add_module(str(x), features[x])
-
-        for x in range(30, 32):
-            self.relu5_2.add_module(str(x), features[x])
-
-        for x in range(32, 34):
-            self.relu5_3.add_module(str(x), features[x])
-
-        for x in range(34, 36):
-            self.relu5_4.add_module(str(x), features[x])
-
-        # don't need the gradients, just want the features
+        vgg = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features.eval()
+        
+        # Define feature slices
+        self.slices = {
+            'relu1_1': slice(0, 2),
+            'relu1_2': slice(2, 4),
+            'relu2_1': slice(4, 7),
+            'relu2_2': slice(7, 9),
+            'relu3_1': slice(9, 12),
+            'relu3_2': slice(12, 14),
+            'relu3_3': slice(14, 16),
+            'relu3_4': slice(16, 18),
+            'relu4_1': slice(18, 21),
+            'relu4_2': slice(21, 23),
+            'relu4_3': slice(23, 25),
+            'relu4_4': slice(25, 27),
+            'relu5_1': slice(27, 30),
+            'relu5_2': slice(30, 32),
+            'relu5_3': slice(32, 34),
+            'relu5_4': slice(34, 36),
+        }
+        
+        # Create modules for each slice
+        for name, slice_range in self.slices.items():
+            self.add_module(name, nn.Sequential(*vgg[slice_range]))
+        
+        # Freeze parameters
         for param in self.parameters():
             param.requires_grad = False
 
     def forward(self, x):
-        relu1_1 = self.relu1_1(x)
-        relu1_2 = self.relu1_2(relu1_1)
-
-        relu2_1 = self.relu2_1(relu1_2)
-        relu2_2 = self.relu2_2(relu2_1)
-
-        relu3_1 = self.relu3_1(relu2_2)
-        relu3_2 = self.relu3_2(relu3_1)
-        relu3_3 = self.relu3_3(relu3_2)
-        relu3_4 = self.relu3_4(relu3_3)
-
-        relu4_1 = self.relu4_1(relu3_4)
-        relu4_2 = self.relu4_2(relu4_1)
-        relu4_3 = self.relu4_3(relu4_2)
-        relu4_4 = self.relu4_4(relu4_3)
-
-        relu5_1 = self.relu5_1(relu4_4)
-        relu5_2 = self.relu5_2(relu5_1)
-        relu5_3 = self.relu5_3(relu5_2)
-        relu5_4 = self.relu5_4(relu5_3)
-
-        out = {
-            'relu1_1': relu1_1,
-            'relu1_2': relu1_2,
-
-            'relu2_1': relu2_1,
-            'relu2_2': relu2_2,
-
-            'relu3_1': relu3_1,
-            'relu3_2': relu3_2,
-            'relu3_3': relu3_3,
-            'relu3_4': relu3_4,
-
-            'relu4_1': relu4_1,
-            'relu4_2': relu4_2,
-            'relu4_3': relu4_3,
-            'relu4_4': relu4_4,
-
-            'relu5_1': relu5_1,
-            'relu5_2': relu5_2,
-            'relu5_3': relu5_3,
-            'relu5_4': relu5_4,
-        }
-        return out
+        features = {}
+        x = self.relu1_1(x)
+        features['relu1_1'] = x
+        x = self.relu1_2(x)
+        features['relu1_2'] = x
+        x = self.relu2_1(x)
+        features['relu2_1'] = x
+        x = self.relu2_2(x)
+        features['relu2_2'] = x
+        x = self.relu3_1(x)
+        features['relu3_1'] = x
+        x = self.relu3_2(x)
+        features['relu3_2'] = x
+        x = self.relu3_3(x)
+        features['relu3_3'] = x
+        x = self.relu3_4(x)
+        features['relu3_4'] = x
+        x = self.relu4_1(x)
+        features['relu4_1'] = x
+        x = self.relu4_2(x)
+        features['relu4_2'] = x
+        x = self.relu4_3(x)
+        features['relu4_3'] = x
+        x = self.relu4_4(x)
+        features['relu4_4'] = x
+        x = self.relu5_1(x)
+        features['relu5_1'] = x
+        x = self.relu5_2(x)
+        features['relu5_2'] = x
+        x = self.relu5_3(x)
+        features['relu5_3'] = x
+        x = self.relu5_4(x)
+        features['relu5_4'] = x
+        
+        return features
